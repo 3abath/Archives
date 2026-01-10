@@ -778,13 +778,62 @@
     <script>
         /* --- GOOGLE DRIVE CONFIGURATION --- */
 const CLIENT_ID = '473085272556-kqdq7m54r2tvh30fqooevb28tmo8il0u.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/drive.file'; // Only allows app to see files it creates
+const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
 let tokenClient;
 let gapiInited = false;
 let gisInited = false;
+let driveFileId = null; // Stores the ID of your cloud archive file
 
-// 1. Initialize the Google API Client
+// 1. Initial Sample Data (Used only if Drive is empty)
+let documents = [
+    {
+        id: 1,
+        fileNumber: 'FILE-152',
+        title: 'F. SOCIETY',
+        preview: 'f society...',
+        date: '10/01/2026',
+        classification: 'top-secret',
+        content: `<p>Surveillance operations have identified a new collective operating under the designation "F. SOCIETY". Intelligence suggests this group operates outside traditional organizational structures.</p><p>Their methods are unconventional, their motives unclear. Further investigation required.</p>`,
+        origin: 'AMEN MASTOUR',
+        classStatus: 'RESTRICTED'
+    },
+    {
+        id: 2,
+        fileNumber: 'FILE NO. 089',
+        title: 'UNSENT LETTER #4',
+        preview: 'To whom it may concern, If you are reading this, it means the encryption keys...',
+        date: '20/03/2026',
+        classification: 'confidential',
+        content: `<p>To whom it may concern,</p><p>If you are reading this, it means the encryption keys have been leaked.</p><p>I never intended for these archives to be public, but perhaps the truth needs to breathe.</p><p>The mission changed us. We are no longer just observers.</p>`,
+        origin: 'AMEN MASTOUR',
+        classStatus: 'EYES ONLY'
+    },
+    {
+        id: 3,
+        fileNumber: 'FILE NO. 017',
+        title: 'FIELD NOTES: NORTHERN SECTOR',
+        preview: 'Conditions are harsher than anticipated. The wind howls like a lost signal...',
+        date: '15/03/2026',
+        classification: 'declassified',
+        content: `<p>Conditions are harsher than anticipated. The wind howls like a lost signal.</p><p>Team morale is holding, but supplies are running low. We've made contact with local intelligence sources.</p><p>The terrain is unforgiving, but the mission continues.</p>`,
+        origin: 'AMEN MASTOUR',
+        classStatus: 'DECLASSIFIED'
+    },
+    {
+        id: 4,
+        fileNumber: 'FILE NO. 001',
+        title: 'OPERATION: FIRST LIGHT',
+        preview: 'The initial deployment of the archive system has been successful. All systems are...',
+        date: '12/03/2026',
+        classification: 'declassified',
+        content: `<p>The initial deployment of the archive system has been successful. All systems are operational.</p><p>This marks the beginning of a new intelligence operation. From this day forward, all observations, reflections, and field reports will be documented and preserved.</p><p>The mission is clear: to build a repository of truth, one document at a time.</p>`,
+        origin: 'AMEN MASTOUR',
+        classStatus: 'DECLASSIFIED'
+    }
+];
+
+// 2. Initialize Google APIs
 function gapiLoaded() {
     gapi.load('client', async () => {
         await gapi.client.init({
@@ -798,18 +847,16 @@ function gisLoaded() {
     tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
-        callback: '', // defined at login
+        callback: '', 
     });
     gisInited = true;
 }
 
-// 2. Authentication: Connect to Google
 async function connectToDrive() {
     tokenClient.callback = async (response) => {
         if (response.error !== undefined) throw (response);
-        document.getElementById('drive_status').innerText = "CONNECTED TO DRIVE";
-        document.getElementById('drive_status').style.color = "#2a7a2a";
-        await syncToDrive();
+        document.getElementById('drive_status').innerText = "SYNCING ARCHIVE...";
+        await loadFromDrive(); 
     };
 
     if (gapi.client.getToken() === null) {
@@ -819,195 +866,149 @@ async function connectToDrive() {
     }
 }
 
-// 3. The "Real Storage" Function (Save to Drive)
+// 3. LOAD: Pulls your "Forever" data from Drive
+async function loadFromDrive() {
+    try {
+        const response = await gapi.client.drive.files.list({
+            q: "name = 'war_archives_master.json' and trashed = false",
+            fields: 'files(id, name)',
+        });
+
+        const files = response.result.files;
+        if (files && files.length > 0) {
+            driveFileId = files[0].id; // Store the ID for future updates
+            const content = await gapi.client.drive.files.get({
+                fileId: driveFileId,
+                alt: 'media',
+            });
+            documents = content.result; // Overwrite samples with real data
+            loadArchive();
+            updateDriveStatus("DRIVE SYNCED", "#2a7a2a");
+        } else {
+            updateDriveStatus("NEW ARCHIVE READY", "#e0e0e0");
+        }
+    } catch (err) {
+        console.error("Load Error", err);
+        updateDriveStatus("SYNC ERROR", "#ff4444");
+    }
+}
+
+// 4. SAVE/UPDATE: Saves current list to Drive
 async function syncToDrive() {
     const fileName = 'war_archives_master.json';
     const fileContent = JSON.stringify(documents);
-    const file = new Blob([fileContent], {type: 'application/json'});
-
-    // Metadata for the file
-    const metadata = {
-        name: fileName,
-        mimeType: 'application/json',
-    };
-
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], {type: 'application/json'}));
-    form.append('file', file);
-
+    const metadata = { name: fileName, mimeType: 'application/json' };
+    
     try {
-        const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-            method: 'POST',
+        let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        let method = 'POST';
+
+        // If file exists, we UPDATE it instead of creating a new one
+        if (driveFileId) {
+            url = `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=multipart`;
+            method = 'PATCH';
+        }
+
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify(metadata)], {type: 'application/json'}));
+        form.append('file', new Blob([fileContent], {type: 'application/json'}));
+
+        const response = await fetch(url, {
+            method: method,
             headers: new Headers({ 'Authorization': 'Bearer ' + gapi.client.getToken().access_token }),
             body: form
         });
+        
         const result = await response.json();
-        console.log('File ID:', result.id);
-        alert("ARCHIVE SYNCED TO GOOGLE DRIVE SUCCESSFULLY.");
+        driveFileId = result.id;
+        updateDriveStatus("ARCHIVE SECURED", "#2a7a2a");
     } catch (err) {
         console.error("Sync Error:", err);
-        alert("UPLOAD FAILED. CHECK CONSOLE.");
+        alert("UPLOAD FAILED.");
     }
 }
-        // Sample data
-        const documents = [
-            {
-                id: 1,
-                fileNumber: 'FILE-152',
-                title: 'F. SOCIETY',
-                preview: 'f society...',
-                date: '10/01/2026',
-                classification: 'top-secret',
-                content: `<p>Surveillance operations have identified a new collective operating under the designation "F. SOCIETY". Intelligence suggests this group operates outside traditional organizational structures.</p>
-                <p>Their methods are unconventional, their motives unclear. Further investigation required.</p>`,
-                origin: 'AMEN MASTOUR',
-                classStatus: 'RESTRICTED'
-            },
-            {
-                id: 2,
-                fileNumber: 'FILE NO. 089',
-                title: 'UNSENT LETTER #4',
-                preview: 'To whom it may concern, If you are reading this, it means the encryption keys...',
-                date: '20/03/2026',
-                classification: 'confidential',
-                content: `<p>To whom it may concern,</p>
-                <p>If you are reading this, it means the encryption keys have been leaked.</p>
-                <p>I never intended for these archives to be public, but perhaps the truth needs to breathe.</p>
-                <p>The mission changed us. We are no longer just observers.</p>`,
-                origin: 'AMEN MASTOUR',
-                classStatus: 'EYES ONLY'
-            },
-            {
-                id: 3,
-                fileNumber: 'FILE NO. 017',
-                title: 'FIELD NOTES: NORTHERN SECTOR',
-                preview: 'Conditions are harsher than anticipated. The wind howls like a lost signal...',
-                date: '15/03/2026',
-                classification: 'declassified',
-                content: `<p>Conditions are harsher than anticipated. The wind howls like a lost signal.</p>
-                <p>Team morale is holding, but supplies are running low. We've made contact with local intelligence sources.</p>
-                <p>The terrain is unforgiving, but the mission continues.</p>`,
-                origin: 'AMEN MASTOUR',
-                classStatus: 'DECLASSIFIED'
-            },
-            {
-                id: 4,
-                fileNumber: 'FILE NO. 001',
-                title: 'OPERATION: FIRST LIGHT',
-                preview: 'The initial deployment of the archive system has been successful. All systems are...',
-                date: '12/03/2026',
-                classification: 'declassified',
-                content: `<p>The initial deployment of the archive system has been successful. All systems are operational.</p>
-                <p>This marks the beginning of a new intelligence operation. From this day forward, all observations, reflections, and field reports will be documented and preserved.</p>
-                <p>The mission is clear: to build a repository of truth, one document at a time.</p>`,
-                origin: 'AMEN MASTOUR',
-                classStatus: 'DECLASSIFIED'
-            }
-        ];
 
-        // Load archive
-        function loadArchive() {
-            const grid = document.getElementById('archiveGrid');
-            grid.innerHTML = '';
-            
-            documents.forEach(doc => {
-                const card = document.createElement('div');
-                card.className = 'file-card';
-                card.onclick = () => viewDocument(doc.id);
-                
-                card.innerHTML = `
-                    <div class="clip-icon">📎</div>
-                    <div class="file-meta">
-                        <span class="file-number">${doc.fileNumber}</span>
-                        <span class="classification-badge ${doc.classification}">${doc.classification.toUpperCase().replace('-', ' ')}</span>
-                    </div>
-                    <h3 class="file-title">${doc.title}</h3>
-                    <p class="file-preview">${doc.preview}</p>
-                    <div class="file-date">${doc.date}</div>
-                `;
-                
-                grid.appendChild(card);
-            });
-        }
+function updateDriveStatus(text, color) {
+    const status = document.getElementById('drive_status');
+    status.innerText = text;
+    status.style.color = color;
+}
 
-        // View document
-        function viewDocument(id) {
-            const doc = documents.find(d => d.id === id);
-            if (!doc) return;
+/* --- ARCHIVE UI FUNCTIONS --- */
 
-            const stampClass = doc.classification === 'declassified' ? 'declassified' : 'top-secret';
-            const stampText = doc.classification === 'declassified' ? 'DECLASSIFIED' : 'TOP SECRET';
+function loadArchive() {
+    const grid = document.getElementById('archiveGrid');
+    grid.innerHTML = '';
+    
+    documents.forEach(doc => {
+        const card = document.createElement('div');
+        card.className = 'file-card';
+        card.onclick = () => viewDocument(doc.id);
+        
+        card.innerHTML = `
+            <div class="clip-icon">📎</div>
+            <div class="file-meta">
+                <span class="file-number">${doc.fileNumber}</span>
+                <span class="classification-badge ${doc.classification}">${doc.classification.toUpperCase().replace('-', ' ')}</span>
+            </div>
+            <h3 class="file-title">${doc.title}</h3>
+            <p class="file-preview">${doc.preview}</p>
+            <div class="file-date">${doc.date}</div>
+        `;
+        grid.appendChild(card);
+    });
+}
 
-            document.getElementById('archiveView').style.display = 'none';
-            const docView = document.getElementById('documentView');
-            docView.style.display = 'block';
-            
-            docView.innerHTML = `
-                <div class="top-bar">
-                    <a href="#" class="back-btn" onclick="showArchive(); return false;">
-                        ← BACK TO ARCHIVE
-                    </a>
-                </div>
-                
-                <div class="document-view">
-                    <div class="doc-stamp ${stampClass}">${stampText}</div>
-                    
-                    <div class="doc-header-info">
-                        <div class="doc-file-number">FILE NO. ${doc.fileNumber}</div>
-                        <div class="doc-date">DATE: ${doc.date}</div>
-                        <div class="doc-origin">ORIGIN: ${doc.origin}</div>
-                        <div class="doc-class">CLASS: ${doc.classStatus}</div>
-                    </div>
-                    
-                    <h1 class="doc-title-main">${doc.title}</h1>
-                    
-                    <div class="doc-content-body">
-                        ${doc.content}
-                    </div>
-                    
-                    ${id === 1 ? `
-                    <div class="doc-image">
-                        <img src="https://images.unsplash.com/photo-1614064641938-3bbee52942c7?w=400" alt="Visual Evidence">
-                        <div class="doc-caption">FIG A.1 — VISUAL EVIDENCE</div>
-                    </div>
-                    ` : ''}
-                </div>
-            `;
+function viewDocument(id) {
+    const doc = documents.find(d => d.id === id);
+    if (!doc) return;
 
-            window.scrollTo(0, 0);
-        }
+    const stampClass = doc.classification === 'declassified' ? 'declassified' : 'top-secret';
+    const stampText = doc.classification === 'declassified' ? 'DECLASSIFIED' : 'TOP SECRET';
 
-        // Show archive
-        function showArchive() {
-            document.getElementById('documentView').style.display = 'none';
-            document.getElementById('archiveView').style.display = 'block';
-        }
+    document.getElementById('archiveView').style.display = 'none';
+    const docView = document.getElementById('documentView');
+    docView.style.display = 'block';
+    
+    docView.innerHTML = `
+        <div class="top-bar">
+            <a href="#" class="back-btn" onclick="showArchive(); return false;">← BACK TO ARCHIVE</a>
+        </div>
+        <div class="document-view">
+            <div class="doc-stamp ${stampClass}">${stampText}</div>
+            <div class="doc-header-info">
+                <div class="doc-file-number">FILE NO. ${doc.fileNumber}</div>
+                <div class="doc-date">DATE: ${doc.date}</div>
+                <div class="doc-origin">ORIGIN: ${doc.origin}</div>
+                <div class="doc-class">CLASS: ${doc.classStatus}</div>
+            </div>
+            <h1 class="doc-title-main">${doc.title}</h1>
+            <div class="doc-content-body">${doc.content}</div>
+        </div>
+    `;
+    window.scrollTo(0, 0);
+}
 
-        // Search files
-        function searchFiles() {
-            const query = document.getElementById('searchInput').value.toLowerCase();
-            const cards = document.querySelectorAll('.file-card');
-            
-            cards.forEach(card => {
-                const text = card.textContent.toLowerCase();
-                card.style.display = text.includes(query) ? 'block' : 'none';
-            });
-        }
+function showArchive() {
+    document.getElementById('documentView').style.display = 'none';
+    document.getElementById('archiveView').style.display = 'block';
+}
 
-        // Modal functions
-        function openModal() {
-            document.getElementById('newEntryModal').classList.add('active');
-        }
+function searchFiles() {
+    const query = document.getElementById('searchInput').value.toLowerCase();
+    const cards = document.querySelectorAll('.file-card');
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(query) ? 'block' : 'none';
+    });
+}
 
-        function closeModal() {
-            document.getElementById('newEntryModal').classList.remove('active');
-        }
+/* --- MODAL & FORM --- */
 
-        function toggleRedaction() {
-            document.getElementById('redactionToggle').classList.toggle('active');
-        }
+function openModal() { document.getElementById('newEntryModal').classList.add('active'); }
+function closeModal() { document.getElementById('newEntryModal').classList.remove('active'); }
+function toggleRedaction() { document.getElementById('redactionToggle').classList.toggle('active'); }
 
-        // Form submission
 document.getElementById('newEntryForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
@@ -1016,12 +1017,9 @@ document.getElementById('newEntryForm').addEventListener('submit', async functio
         <div class="doc-image">
             <img src="${imageUrl}" alt="Visual Evidence" onerror="this.parentElement.style.display='none'">
             <div class="doc-caption">FIG ${documents.length + 1}.1 — VISUAL EVIDENCE</div>
-        </div>
-    ` : '';
+        </div>` : '';
     
-    // Create the document object
     const newDoc = {
-        // Use timestamp for ID to ensure it's unique even after refresh
         id: Date.now(), 
         fileNumber: document.getElementById('fileNumber').value,
         title: document.getElementById('docTitle').value,
@@ -1033,50 +1031,44 @@ document.getElementById('newEntryForm').addEventListener('submit', async functio
         classStatus: document.getElementById('clearance').value.toUpperCase()
     };
     
-    // 1. Add to the list on your screen
     documents.unshift(newDoc);
     loadArchive();
     closeModal();
     
-    // 2. AUTOMATICALLY SAVE TO DRIVE
     if (gapi.client.getToken() !== null) {
-        document.getElementById('drive_status').innerText = "SYNCING NEW ENTRY...";
-        await syncToDrive(); // This sends the updated 'documents' list to your Drive
+        updateDriveStatus("SYNCING...", "#e0e0e0");
+        await syncToDrive();
     } else {
-        alert('Document filed locally! Connect to Google Drive to save it permanently.');
+        alert('Document filed locally. Connect to Drive to save permanently.');
     }
 
-    // 3. Reset form
     this.reset();
     document.getElementById('imagePreview').style.display = 'none';
 });
-        // Close modal on background click
-        document.getElementById('newEntryModal').addEventListener('click', function(e) {
-            if (e.target === this) closeModal();
-        });
 
-        // Image URL preview
-        document.getElementById('imageUrl').addEventListener('input', function(e) {
-            const url = e.target.value.trim();
-            const preview = document.getElementById('imagePreview');
-            const previewImg = document.getElementById('previewImg');
-            
-            if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-                previewImg.src = url;
-                previewImg.onload = function() {
-                    preview.style.display = 'block';
-                };
-                previewImg.onerror = function() {
-                    preview.style.display = 'none';
-                };
-            } else {
-                preview.style.display = 'none';
-            }
-        });
+// Modal close on background click
+document.getElementById('newEntryModal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
 
-        // Initialize
-        loadArchive();
+// Image Preview logic
+document.getElementById('imageUrl').addEventListener('input', function(e) {
+    const url = e.target.value.trim();
+    const preview = document.getElementById('imagePreview');
+    const previewImg = document.getElementById('previewImg');
+    if (url.startsWith('http')) {
+        previewImg.src = url;
+        previewImg.onload = () => preview.style.display = 'block';
+        previewImg.onerror = () => preview.style.display = 'none';
+    } else {
+        preview.style.display = 'none';
+    }
+});
+
+// Initialize on Page Load
+loadArchive();
     </script>
 </body>
 
 </html>
+
