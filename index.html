@@ -1008,37 +1008,48 @@ async function syncToDrive() {
         }
 
         // Form submission
-        document.getElementById('newEntryForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const imageUrl = document.getElementById('imageUrl').value;
-            const imageHtml = imageUrl ? `
-                <div class="doc-image">
-                    <img src="${imageUrl}" alt="Visual Evidence" onerror="this.parentElement.style.display='none'">
-                    <div class="doc-caption">FIG ${documents.length + 1}.1 — VISUAL EVIDENCE</div>
-                </div>
-            ` : '';
-            
-            const newDoc = {
-                id: documents.length + 1,
-                fileNumber: document.getElementById('fileNumber').value,
-                title: document.getElementById('docTitle').value,
-                preview: document.getElementById('docContent').value.substring(0, 80) + '...',
-                date: document.getElementById('dateCode').value,
-                classification: document.getElementById('clearance').value.toLowerCase().replace(' ', '-'),
-                content: `<p>${document.getElementById('docContent').value}</p>${imageHtml}`,
-                origin: 'AMEN MASTOUR',
-                classStatus: document.getElementById('clearance').value.toUpperCase()
-            };
-            
-            documents.unshift(newDoc);
-            loadArchive();
-            closeModal();
-            alert('Document filed successfully!');
-            this.reset();
-            document.getElementById('imagePreview').style.display = 'none';
-        });
+document.getElementById('newEntryForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const imageUrl = document.getElementById('imageUrl').value;
+    const imageHtml = imageUrl ? `
+        <div class="doc-image">
+            <img src="${imageUrl}" alt="Visual Evidence" onerror="this.parentElement.style.display='none'">
+            <div class="doc-caption">FIG ${documents.length + 1}.1 — VISUAL EVIDENCE</div>
+        </div>
+    ` : '';
+    
+    // Create the document object
+    const newDoc = {
+        // Use timestamp for ID to ensure it's unique even after refresh
+        id: Date.now(), 
+        fileNumber: document.getElementById('fileNumber').value,
+        title: document.getElementById('docTitle').value,
+        preview: document.getElementById('docContent').value.substring(0, 80) + '...',
+        date: document.getElementById('dateCode').value,
+        classification: document.getElementById('clearance').value.toLowerCase().replace(' ', '-'),
+        content: `<p>${document.getElementById('docContent').value}</p>${imageHtml}`,
+        origin: 'AMEN MASTOUR',
+        classStatus: document.getElementById('clearance').value.toUpperCase()
+    };
+    
+    // 1. Add to the list on your screen
+    documents.unshift(newDoc);
+    loadArchive();
+    closeModal();
+    
+    // 2. AUTOMATICALLY SAVE TO DRIVE
+    if (gapi.client.getToken() !== null) {
+        document.getElementById('drive_status').innerText = "SYNCING NEW ENTRY...";
+        await syncToDrive(); // This sends the updated 'documents' list to your Drive
+    } else {
+        alert('Document filed locally! Connect to Google Drive to save it permanently.');
+    }
 
+    // 3. Reset form
+    this.reset();
+    document.getElementById('imagePreview').style.display = 'none';
+});
         // Close modal on background click
         document.getElementById('newEntryModal').addEventListener('click', function(e) {
             if (e.target === this) closeModal();
@@ -1067,4 +1078,5 @@ async function syncToDrive() {
         loadArchive();
     </script>
 </body>
+
 </html>
